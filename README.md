@@ -220,3 +220,6 @@ setup.py                 Python package entry point
 | Lateral tracking error | Comparable to MPC on skidpad (constant operating point) |
 | Steering smoothness | May show more oscillation than MPC (no constraint handling) |
 | Constraint satisfaction | Soft — steer and rate are clamped post-computation |
+
+
+/home/pichs/Pictures/Screenshots/Screenshot from 2026-05-11 15-14-34.png
