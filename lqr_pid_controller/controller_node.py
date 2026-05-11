@@ -133,11 +133,14 @@ LF = 0.872   # CoG to front axle  = wbase × (1 − x_cg)   [m]
 LR = 0.658   # CoG to rear axle   = wbase × x_cg          [m]
 
 # Cornering stiffness at the skidpad operating point.
-# The MPC interpolates Cf/Cr from tyre load data (~15 k–36 k N/rad).
-# These fixed values are the linearization point for the LQR; they should be
-# refined using measured skidpad tracking error data during tuning.
-CF = 20000.0   # front axle cornering stiffness           [N/rad]
-CR = 20000.0   # rear axle cornering stiffness            [N/rad]
+# Computed from the DUT25 tyre stiffness curve used by LPVMPC.get_tyre_stiffness:
+#   C_data_x = [300, 500, 700, 900] N  (normal load per tyre)
+#   C_data_y = [15374, 24177, 31211, 36360] N/rad
+# Front per-tyre load = m·g·(1−x_cg)/2 = 180·9.81·0.43/2 ≈ 379.6 N → 18 877 N/rad
+# Rear  per-tyre load = m·g·x_cg/2     = 180·9.81·0.57/2 ≈ 503.3 N → 24 293 N/rad
+# (x_cg = 0.57 = rear weight fraction; LF = 0.872 m, LR = 0.658 m)
+CF = 18877.0   # front axle cornering stiffness           [N/rad]
+CR = 24293.0   # rear axle cornering stiffness            [N/rad]
 
 # Skidpad constant-speed target — the LQR is linearized at this speed.
 VX_OP = 11.25  # [m/s]
@@ -519,8 +522,24 @@ class LqrPidController(Node):
         # Heading error: vehicle yaw minus path heading, wrapped to [−π, π].
         e_psi = normalize_angle(x0.heading - psi_ref)
 
-        # vy, r, steer come directly from the state estimator output in x0.
-        error_state = np.array([e_y, e_psi, x0.vy, x0.r, x0.steer], dtype=float)
+        # Path curvature feed-forward — shift vy/r/steer references to the
+        # steady-state values needed for the current path curve so the LQR
+        # does not fight the non-zero steer and yaw rate required to follow
+        # the circle. Without this, K[steer] and K[r] produce a large net
+        # command opposing the turn at the moment circular motion begins.
+        kappa     = self._compute_path_curvature(ref_idx, msg)
+        r_ref     = self._vx_op * kappa               # expected yaw rate  [rad/s]
+        steer_ref = -(LF + LR) * kappa                # kinematic steer    [rad]
+        # vy_ref matches skidpad_manager's vy proxy: 0.2429 * vx * r
+        vy_ref    = 0.2429 * self._vx_op * r_ref
+
+        error_state = np.array([
+            e_y,
+            e_psi,
+            x0.vy    - vy_ref,
+            x0.r     - r_ref,
+            x0.steer - steer_ref,
+        ], dtype=float)
 
         # Step 4: LQR control law  u = −K x
         u_raw = float(-(self._K @ error_state)[0])
@@ -559,10 +578,13 @@ class LqrPidController(Node):
 
         self._opt_result_pub.publish(result)
 
-        self.get_logger().debug(
-            f"LQR | e_y={e_y:.3f} m  e_psi={math.degrees(e_psi):.1f}°  "
-            f"vy={x0.vy:.3f} m/s  r={x0.r:.3f} rad/s  "
-            f"steer={x0.steer:.3f} rad  u={u:.4f} rad/s"
+        self.get_logger().info(
+            f"LQR | "
+            f"e_y={e_y:+.3f}m  e_psi={math.degrees(e_psi):+.1f}deg  "
+            f"kappa={kappa:+.4f}/m  r_ref={r_ref:+.3f}rad/s  steer_ref={steer_ref:+.3f}rad  "
+            f"x0.r={x0.r:+.3f}rad/s  x0.steer={x0.steer:+.3f}rad  "
+            f"u_raw={u_raw:+.4f}  u={u:+.4f}rad/s",
+            throttle_duration_sec=0.25,
         )
 
     def _nearest_waypoint(self, px: float, py: float,
@@ -577,6 +599,32 @@ class LqrPidController(Node):
         xs = np.array(msg.pos_x)
         ys = np.array(msg.pos_y)
         return int(np.argmin(np.hypot(xs - px, ys - py)))
+
+    def _compute_path_curvature(self, ref_idx: int, msg: OptRequest) -> float:
+        """
+        Estimate signed path curvature κ = dθ/ds at the reference waypoint.
+
+        Positive κ = left turn (CCW), negative κ = right turn (CW).
+
+        Curvature is the rate of heading change per unit arc length. It is
+        computed from the heading angle difference between adjacent waypoints
+        divided by their arc-length separation. This gives the feed-forward
+        reference for yaw rate and steer angle needed to follow the curve
+        without the LQR fighting the required steady-state values.
+        """
+        n = len(msg.pos_x)
+        if n < 2:
+            return 0.0
+        i = min(ref_idx, n - 2)
+        theta0 = math.atan2(msg.head_sin[i],     msg.head_cos[i])
+        theta1 = math.atan2(msg.head_sin[i + 1], msg.head_cos[i + 1])
+        ds = math.hypot(
+            msg.pos_x[i + 1] - msg.pos_x[i],
+            msg.pos_y[i + 1] - msg.pos_y[i],
+        )
+        if ds < 1e-6:
+            return 0.0
+        return normalize_angle(theta1 - theta0) / ds
 
     def _propagate_trajectory(self, x0, u: float) -> list:
         """
@@ -729,8 +777,10 @@ class LqrPidController(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = LqrPidController()
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     finally:
         node.destroy_node()
         rclpy.shutdown()

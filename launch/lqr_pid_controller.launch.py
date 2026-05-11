@@ -50,12 +50,12 @@ def generate_launch_description():
                 # Tune these to adjust lateral tracking behaviour.
                 # Starting values mirror MPC weights from parameters_LPV.yaml.
                 # ----------------------------------------------------------
-                "q_e_y":        10.0,   # lateral error penalty
-                "q_e_psi":       1.0,   # heading error penalty
-                "q_vy":          0.0,   # lateral velocity damping (raise to reduce oscillation)
-                "q_r":           0.0,   # yaw rate penalty
-                "q_steer":       1.0,   # steering angle penalty
-                "r_steer_rate":  1.0,   # control effort penalty (raise = smoother steering)
+                "q_e_y":        8.0,    # lateral error penalty
+                "q_e_psi":      1.0,    # heading error penalty
+                "q_vy":         5.0,    # lateral velocity damping
+                "q_r":          4.0,    # yaw rate penalty — damps oscillation at circle entry
+                "q_steer":      1.0,    # steering angle penalty
+                "r_steer_rate": 1.0,    # control effort penalty
 
                 # ----------------------------------------------------------
                 # PID — longitudinal (matching longitudinal_pid_parameters.yaml)

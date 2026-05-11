@@ -63,16 +63,18 @@ Riccati Equation (DARE). K remains constant for the full mission.
 All Q/R weights are ROS parameters. Change them in the launch file or a YAML
 config; relaunch the node to apply (K is recomputed at startup).
 
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `q_e_y` | 10.0 | Lateral tracking tightness — raise to reduce path deviation |
-| `q_e_psi` | 1.0 | Heading correction speed — raise for faster alignment |
-| `q_vy` | 0.0 | Lateral oscillation damping — raise slowly if car oscillates |
-| `q_r` | 0.0 | Yaw rate penalty — rarely needs changing |
-| `q_steer` | 1.0 | Steering angle penalty — raise to keep steer close to zero |
-| `r_steer_rate` | 1.0 | Control effort penalty — raise for smoother, slower steering |
+| Parameter | Confirmed best | Effect / Notes |
+|-----------|---------------|----------------|
+| `q_e_y` | **8.0** | Lateral tracking tightness. Raising from 4→8 cut SS offset from −0.47m to −0.35m. Primary lever for steady-state tracking. |
+| `q_e_psi` | **1.0** | Heading correction. **Floor is 1.0** — lowering to 0.5 caused oscillation divergence on circle 2. DARE responds <0.1% to small changes; do not raise above 2.0 (R3 regressed). |
+| `q_vy` | **5.0** | Lateral velocity damping. Raising from 2→5 improved circle entry stability. |
+| `q_r` | **4.0** | Yaw rate penalty — damps oscillation at circle entry. |
+| `q_steer` | **1.0** | **Dead knob in this regime.** DARE responds <0.5% to changes; raising to 4.0 regressed performance without meaningful K change. Do not adjust. |
+| `r_steer_rate` | **1.0** | Control effort penalty. Lowering from 1.5→1.0 improved transient response at circle entries. |
 
-Starting values mirror the MPC weights in `parameters_LPV.yaml`.
+> **Current performance ceiling:** Q/R tuning is exhausted. Circle entry peaks (C1 ~2.56m, C2 ~7.66m)
+> and steady-state offset (~−0.35m) are driven by `max_steer_rate` saturation and feedforward
+> mismatch — not by Q/R weights. Next experiment: raise `max_steer_rate` to 1.0 rad/s.
 
 ---
 
