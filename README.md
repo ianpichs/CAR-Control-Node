@@ -222,4 +222,3 @@ setup.py                 Python package entry point
 | Constraint satisfaction | Soft — steer and rate are clamped post-computation |
 
 
-/home/pichs/Pictures/Screenshots/Screenshot from 2026-05-11 15-14-34.png
