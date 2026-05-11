@@ -102,14 +102,12 @@ LQR (lateral) — adjust Q/R via ROS parameters or launch file:
 Lookahead feedforward — adjust via lookahead_steps in launch file:
     Controls how many waypoints ahead the curvature feedforward reads.
     Waypoint spacing = vx_op × dt_traj = 11.25 × 0.01 = 0.1125 m/waypoint.
-    lookahead_steps=0 → uses nearest waypoint only (no preview — current default).
+    lookahead_steps=40 → 4.5 m / 0.4 s preview at 11.25 m/s (current optimum).
     Increase → earlier pre-steering before circle entries; reduces entry peak
                at the cost of pre-steering while still on the straight if too
                large (car begins curving before the geometric entry point).
-    Tested range: 20 (marginal SS improvement), 25 and 40 (oscillation on straight).
-    Skidpad straight-to-circle transition is abrupt (no curvature ramp), making
-    lookahead net negative on this track. Set to 0 until a smoother path transition
-    is available from the path planner.
+    Tested range: 20/25 (worse — pre-steer on straight), 40 (best — C2 peak ÷14
+    vs baseline), 60 (first early-turn at C2 but C1 regression +1.3m).
 
 PID (longitudinal) — adjust via kp_list / ki_list in launch file or yaml:
     Values match DUT25 longitudinal_control node — only change if longitudinal
@@ -157,14 +155,20 @@ CR = 24293.0   # rear axle cornering stiffness            [N/rad]
 # Skidpad constant-speed target — the LQR is linearized at this speed.
 VX_OP = 11.25  # [m/s]
 
+# Gain-scheduling lookup table: vx values at which K is pre-computed.
+# At runtime the two bracketing entries are linearly interpolated using the
+# current measured speed from AccRequest. Covers the full acceleration phase
+# (startup → cruise). Values below VX_SCHEDULE[0] clamp to the first entry.
+VX_SCHEDULE = [3.0, 5.0, 7.0, 9.0, 11.25]  # [m/s]
+
 
 # =============================================================================
 # ACTUATOR LIMITS — DUT25 spec (from parameters_LPV.yaml)
 # =============================================================================
 
 MAX_STEER_ANGLE = 0.4   # maximum front wheel steering angle   [rad]
-MAX_STEER_RATE = 0.5    # maximum steering rate                 [rad/s]
-LOOKAHEAD_STEPS = 0     # waypoints ahead for curvature feedforward preview (0 = nearest waypoint only)
+MAX_STEER_RATE = 1.3    # maximum steering rate                 [rad/s]
+LOOKAHEAD_STEPS = 40    # waypoints ahead for curvature feedforward preview (0 = nearest waypoint only)
 
 
 # =============================================================================
@@ -190,11 +194,11 @@ DT_TRAJ = T_HORIZON / N_HORIZON  # step size = 0.01 s (10 ms)
 # =============================================================================
 
 Q_MATRIX = np.diag([
-    10.0,   # e_y   — lateral path error     (matches MPC pos_y = 10)
-    1.0,    # e_psi — heading error           (matches MPC heading = 1)
-    0.0,    # vy    — lateral velocity        (raise >0 to damp oscillation)
-    0.0,    # r     — yaw rate               (usually not penalised directly)
-    1.0,    # steer — steering angle          (matches MPC steer = 1)
+    4.0,    # e_y   — lateral path error     (tuned v0.3.7; ceiling at 4.0 for current damping)
+    1.0,    # e_psi — heading error           (floor at 1.0; lower causes divergence)
+    5.0,    # vy    — lateral velocity        (tuned v0.3.7; 7.0 regresses C2 — net negative)
+    8.0,    # r     — yaw rate               (tuned v0.3.7; raising 4→8 was clearest session gain)
+    1.0,    # steer — steering angle          (DARE-insensitive in this regime; leave at 1.0)
 ])
 
 R_MATRIX = np.array([[1.0]])   # steering_rate cost  (matches MPC R = 1)
@@ -363,11 +367,12 @@ class LqrPidController(Node):
         self._load_parameters()
 
         # ------------------------------------------------------------------
-        # Compute LQR gain K offline at node startup.
-        # K is constant throughout the mission because the skidpad operates
-        # at a fixed speed — the linearization point does not change.
+        # Pre-compute LQR gain table at startup. K is interpolated at runtime
+        # from the current measured speed so the controller remains optimal
+        # during the acceleration phase, not just at cruise speed.
         # ------------------------------------------------------------------
-        self._build_lqr()
+        self._current_vx: float = self._vx_op  # updated by _on_acc_request
+        self._build_lqr_table()
 
         # ------------------------------------------------------------------
         # Longitudinal PID integrator state
@@ -398,11 +403,11 @@ class LqrPidController(Node):
 
         self.get_logger().info(
             f"LQR-PID controller initialised.\n"
-            f"  vx_op  = {self._vx_op:.2f} m/s\n"
+            f"  vx_schedule = {self._vx_schedule} m/s\n"
             f"  N      = {self._n_horizon} steps\n"
             f"  Tf     = {self._t_horizon:.2f} s\n"
             f"  dt_traj= {self._dt_traj:.4f} s\n"
-            f"  K      = {self._K}"
+            f"  K_table entries = {len(self._K_table)}"
         )
 
     # ------------------------------------------------------------------
@@ -412,6 +417,7 @@ class LqrPidController(Node):
     def _declare_parameters(self) -> None:
         """Declare all ROS parameters with module-level constants as defaults."""
         self.declare_parameter("vx_operating",      VX_OP)
+        self.declare_parameter("vx_schedule",       VX_SCHEDULE)
         self.declare_parameter("n_horizon",          N_HORIZON)
         self.declare_parameter("t_horizon",          T_HORIZON)
         self.declare_parameter("max_steer_angle",    MAX_STEER_ANGLE)
@@ -438,7 +444,8 @@ class LqrPidController(Node):
         """Read declared ROS parameters into instance attributes."""
         p = lambda name: self.get_parameter(name).value
 
-        self._vx_op     = float(p("vx_operating"))
+        self._vx_op      = float(p("vx_operating"))
+        self._vx_schedule = [float(v) for v in p("vx_schedule")]
         self._n_horizon = int(p("n_horizon"))
         self._t_horizon = float(p("t_horizon"))
         self._dt_traj   = self._t_horizon / self._n_horizon
@@ -465,26 +472,39 @@ class LqrPidController(Node):
         self._ki_list      = list(p("ki_list"))
         self._kd_list      = list(p("kd_list"))
 
-    def _build_lqr(self) -> None:
+    def _build_lqr_table(self) -> None:
         """
-        Build the discrete LQR gain K at the skidpad operating point.
+        Pre-compute a gain lookup table: one K per entry in vx_schedule.
 
-        DT_TRAJ (= Tf / N = 0.01 s) is used as the discretization timestep
-        so that K is consistent with the trajectory propagation step size.
-        This computation runs once at node startup and K does not change.
+        Each K is the DARE solution for the bicycle model linearized at that
+        speed. At runtime _interpolate_K() blends adjacent entries based on
+        the current measured speed from AccRequest.
         """
-        A_c, B_c = build_dynamic_lateral_system(self._vx_op)
-        self._A_d, self._B_d = discretize_system(A_c, B_c, self._dt_traj)
-        self._K = solve_dare(self._A_d, self._B_d, self._Q, self._R)
+        self._K_table: list = []
+        for vx in self._vx_schedule:
+            A_c, B_c = build_dynamic_lateral_system(vx)
+            A_d, B_d = discretize_system(A_c, B_c, self._dt_traj)
+            K = solve_dare(A_d, B_d, self._Q, self._R)
+            self._K_table.append(K)
+            self.get_logger().info(f"K at vx={vx:.2f} m/s: {K}")
 
-        self.get_logger().info(
-            f"LQR offline computation complete.\n"
-            f"  A_c =\n{A_c}\n"
-            f"  B_c = {B_c.flatten()}\n"
-            f"  A_d =\n{self._A_d}\n"
-            f"  B_d = {self._B_d.flatten()}\n"
-            f"  K   = {self._K}"
-        )
+    def _interpolate_K(self, vx: float) -> np.ndarray:
+        """
+        Linearly interpolate K from the lookup table at the given speed.
+
+        Clamps to the lowest/highest table entry if vx is out of range.
+        """
+        sched = self._vx_schedule
+        table = self._K_table
+        if vx <= sched[0]:
+            return table[0]
+        if vx >= sched[-1]:
+            return table[-1]
+        for i in range(len(sched) - 1):
+            if sched[i] <= vx <= sched[i + 1]:
+                alpha = (vx - sched[i]) / (sched[i + 1] - sched[i])
+                return (1.0 - alpha) * table[i] + alpha * table[i + 1]
+        return table[-1]
 
     # ------------------------------------------------------------------
     # LATERAL — OptRequest callback
@@ -548,10 +568,11 @@ class LqrPidController(Node):
         # geometric circle entry, reducing the circle-entry transient.
         preview_idx = min(ref_idx + self._lookahead_steps, len(msg.pos_x) - 2)
         kappa     = self._compute_path_curvature(preview_idx, msg)
-        r_ref     = self._vx_op * kappa               # expected yaw rate  [rad/s]
+        vx        = self._current_vx
+        r_ref     = vx * kappa                        # expected yaw rate  [rad/s]
         steer_ref = -(LF + LR) * kappa                # kinematic steer    [rad]
         # vy_ref matches skidpad_manager's vy proxy: 0.2429 * vx * r
-        vy_ref    = 0.2429 * self._vx_op * r_ref
+        vy_ref    = 0.2429 * vx * r_ref
 
         error_state = np.array([
             e_y,
@@ -561,8 +582,8 @@ class LqrPidController(Node):
             x0.steer - steer_ref,
         ], dtype=float)
 
-        # Step 4: LQR control law  u = −K x
-        u_raw = float(-(self._K @ error_state)[0])
+        # Step 4: LQR control law  u = −K x  (K interpolated at current speed)
+        u_raw = float(-(self._interpolate_K(vx) @ error_state)[0])
         u = float(np.clip(u_raw, -self._max_steer_rate, self._max_steer_rate))
 
         # Step 5: predicted steer angle sequence (N+1 elements).
@@ -579,7 +600,7 @@ class LqrPidController(Node):
         ]
 
         # Step 6: full nonlinear trajectory for visualization
-        traj = self._propagate_trajectory(x0, u)
+        traj = self._propagate_trajectory(x0, u, vx)
 
         # Step 7: publish OptResult
         result = OptResult()
@@ -604,7 +625,7 @@ class LqrPidController(Node):
             f"preview={preview_idx-ref_idx}wp  kappa={kappa:+.4f}/m  "
             f"r_ref={r_ref:+.3f}rad/s  steer_ref={steer_ref:+.3f}rad  "
             f"x0.r={x0.r:+.3f}rad/s  x0.steer={x0.steer:+.3f}rad  "
-            f"u_raw={u_raw:+.4f}  u={u:+.4f}rad/s",
+            f"vx={vx:.2f}m/s  u_raw={u_raw:+.4f}  u={u:+.4f}rad/s",
             throttle_duration_sec=0.25,
         )
 
@@ -647,7 +668,7 @@ class LqrPidController(Node):
             return 0.0
         return normalize_angle(theta1 - theta0) / ds
 
-    def _propagate_trajectory(self, x0, u: float) -> list:
+    def _propagate_trajectory(self, x0, u: float, vx: float) -> list:
         """
         Propagate the nonlinear global-frame bicycle model forward N steps.
 
@@ -671,14 +692,14 @@ class LqrPidController(Node):
             px, py, psi, vy, r, steer = state
 
             # Full nonlinear lateral bicycle dynamics (global frame)
-            d_px    =  self._vx_op * math.cos(psi) - vy * math.sin(psi)
-            d_py    =  self._vx_op * math.sin(psi) + vy * math.cos(psi)
+            d_px    =  vx * math.cos(psi) - vy * math.sin(psi)
+            d_py    =  vx * math.sin(psi) + vy * math.cos(psi)
             d_psi   =  r
-            d_vy    = (-(CF + CR) / (M * self._vx_op) * vy
-                       + (-self._vx_op + (CR * LR - CF * LF) / (M * self._vx_op)) * r
+            d_vy    = (-(CF + CR) / (M * vx) * vy
+                       + (-vx + (CR * LR - CF * LF) / (M * vx)) * r
                        - CF / M * steer)
-            d_r     = ((LR * CR - LF * CF) / (IZ * self._vx_op) * vy
-                       - (LF ** 2 * CF + LR ** 2 * CR) / (IZ * self._vx_op) * r
+            d_r     = ((LR * CR - LF * CF) / (IZ * vx) * vy
+                       - (LF ** 2 * CF + LR ** 2 * CR) / (IZ * vx) * r
                        - LF * CF / IZ * steer)
             d_steer =  u   # steering angle integrates the control rate
 
@@ -711,6 +732,10 @@ class LqrPidController(Node):
         """
         current_speed = msg.current_speed
         desired_speed = msg.desired_speed
+
+        # Cache for lateral controller — clamp to minimum schedule speed to
+        # avoid extrapolating below the lowest linearization point.
+        self._current_vx = float(max(current_speed, self._vx_schedule[0]))
 
         # Update gain set based on current speed
         self._update_long_gains(current_speed)

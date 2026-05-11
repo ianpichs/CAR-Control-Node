@@ -44,7 +44,7 @@ def generate_launch_description():
                 # Physical steering limits
                 "max_steer_angle": 0.4,         # [rad]
                 "max_steer_rate":  1.3,         # [rad/s]
-                "lookahead_steps": 0,           # waypoints ahead for curvature feedforward (0 = disabled)
+                "lookahead_steps": 40,          # waypoints ahead for curvature feedforward (4.5 m preview)
 
                 # ----------------------------------------------------------
                 # LQR — cost matrix weights (Q diagonal entries + R)
@@ -53,10 +53,10 @@ def generate_launch_description():
                 # ----------------------------------------------------------
                 "q_e_y":        4.0,    # lateral error penalty
                 "q_e_psi":      1.0,    # heading error penalty
-                "q_vy":         7.0,    # lateral velocity damping
+                "q_vy":         5.0,    # lateral velocity damping
                 "q_r":          8.0,    # yaw rate penalty — damps oscillation at circle entry
                 "q_steer":      1.0,    # steering angle penalty
-                "r_steer_rate": 0.5,    # control effort penalty
+                "r_steer_rate": 1.0,    # control effort penalty
 
                 # ----------------------------------------------------------
                 # PID — longitudinal (matching longitudinal_pid_parameters.yaml)

@@ -7,6 +7,403 @@ Versioning: [Semantic Versioning](https://semver.org/) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.3.7] — 2026-05-11 UTC  ← BEST RESULT
+
+### Changed
+- **Reverted to v0.2.9 Q/R, max_steer_rate 4.0 → 1.3, lookahead 60 → 40**: the Q
+  weight exploration (v0.3.4–0.3.6) confirmed that extreme weights broke tracking
+  without improving the C2 transition. Reverted to v0.2.9 baseline and set
+  lookahead_steps=40 (4.5 m / 0.4 s preview) — a conservative step back from the
+  lookahead=60 breakthrough to reduce the C1 pre-steer regression while retaining
+  most of the C2 benefit.
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 1.0 | 5.0 | 8.0 | 1.0 | 1.0 | 1.3 | 40 |
+
+### Results
+- C1 entry peak: ~0.758 m inside (best C1 recorded this session)
+- SS: ~−0.47 m inside bias (slight regression vs v0.2.9 ~0m; lookahead pre-steer
+  pulling car inside during circular tracking)
+- C2 transition peak: ~0.518 m (**best C2 recorded — 14× improvement from 7.5 m baseline**)
+- **Overall: best result of the entire tuning programme**
+
+---
+
+## [0.3.6] — 2026-05-11 UTC
+
+### Changed
+- q_steer 1.0 → 50 (exploring whether high steer penalty forces earlier correction
+  at circle transitions, with all other weights from v0.3.5)
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 50.0 | 100.0 | 5.0 | 8.0 | 50.0 | 1.0 | 4.0 | 60 |
+
+### Results
+- Degraded — q_steer is DARE-insensitive in this regime (K[steer] barely changes).
+  Confirmed prior finding from v0.2.3. Prompted revert to v0.2.9 weights.
+
+---
+
+## [0.3.5] — 2026-05-11 UTC
+
+### Changed
+- q_e_psi 1.0 → 100, q_e_y 100 → 50 (attempting heading-dominant correction)
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 50.0 | 100.0 | 5.0 | 8.0 | 1.0 | 1.0 | 4.0 | 60 |
+
+### Results
+- Degraded — extreme heading weight drove car off-track at C2 transition.
+
+---
+
+## [0.3.4] — 2026-05-11 UTC
+
+### Changed
+- q_e_y 4.0 → 100 (attempting to force more aggressive lateral correction at transitions)
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 100.0 | 1.0 | 5.0 | 8.0 | 1.0 | 1.0 | 4.0 | 60 |
+
+### Results
+- Degraded — extreme q_e_y causes oscillation at this operating point. Confirms
+  q_e_y ceiling ≈ 4.0 for current damping levels (q_vy=5.0, q_r=8.0).
+
+---
+
+## [0.3.3] — 2026-05-11 UTC  ← BREAKTHROUGH
+
+### Changed
+- **lookahead_steps 0 → 60** (6.75 m / 0.6 s preview at 11.25 m/s): following the
+  finding that max_steer_rate=4.0 still hit the steering angle limit (±0.400 rad)
+  rather than the rate limit, switched focus back to feedforward preview. 60 steps
+  spans the circle boundary — kappa_ref flips sign mid-horizon, giving the LQR
+  ~0.6 s warning before the geometric C1→C2 transition.
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 1.0 | 5.0 | 8.0 | 1.0 | 1.0 | 4.0 | 60 |
+
+### Results
+- C1 entry: ~3.3 m (regression — car pre-steered early due to kappa step on straight
+  approach being visible 6.75 m out)
+- SS: small
+- C2 transition: ~5.0 m (**best C2 to date; first time car ever turned early for C2**)
+- Key finding: lookahead feedforward is the primary lever for the C2 spike, not
+  steer rate or Q/R weights. The early-turn behaviour was observed for the first time.
+
+---
+
+## [0.3.2] — 2026-05-11 UTC
+
+### Changed
+- **max_steer_rate 1.3 → 4.0 rad/s**: raising to the DUT25 physical maximum to
+  remove what was believed to be the rate-limiting constraint at circle entry.
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 1.0 | 5.0 | 8.0 | 1.0 | 1.0 | 4.0 | 0 |
+
+### Results
+- No improvement. Log confirmed x0.steer pinned at ±0.400 rad during both C1 entry
+  and C1→C2 transition — the binding constraint is the **steering angle limit**, not
+  the rate. At κ = 1/7.5 m⁻¹ the steady-state steer_ref ≈ 0.200 rad; transient
+  overshoot saturates the remaining 0.200 rad of margin regardless of actuator speed.
+- C1 and C2 peaks unchanged from v0.3.1. Kept max_steer_rate=4.0 for subsequent
+  experiments (no cost since angle is binding).
+
+---
+
+## [0.3.1] — 2026-05-11 UTC
+
+### Changed
+- Reverted Q/R to v0.2.9 best params for gain-scheduling baseline run
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 1.0 | 5.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- C1 entry: ~2.4 m
+- SS: ~−0.5 m inside bias
+- C2 transition: ~7.5 m
+
+---
+
+## [0.3.0] — 2026-05-11 UTC
+
+### Added
+- **Gain scheduling via lookup table**: DARE is now solved at startup for each
+  entry in `vx_schedule` (default [3, 5, 7, 9, 11.25] m/s). At runtime K is
+  linearly interpolated from the two bracketing entries using the current
+  measured speed from AccRequest. Speeds below the minimum schedule entry clamp
+  to the lowest K.
+- `vx_schedule` ROS parameter (list of floats) to configure the schedule points.
+- `_current_vx` cached from AccRequest and used for feedforward references
+  (r_ref, vy_ref) and trajectory propagation — previously all used the fixed
+  `vx_op=11.25` even during the acceleration phase.
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 20.0 | 100.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.27] — 2026-05-11 UTC
+
+### Changed
+- q_vy 15.0 → 1.0, q_r 16.0 → 1.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 20.0 | 100.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.26] — 2026-05-11 UTC
+
+### Changed
+- q_e_y 4.0 → 20.0, q_e_psi 8.0 → 100.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 20.0 | 100.0 | 15.0 | 16.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.25] — 2026-05-11 UTC
+
+### Changed
+- q_e_psi 1.0 → 8.0, q_r 8.0 → 16.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 8.0 | 15.0 | 16.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.24] — 2026-05-11 UTC
+
+### Changed
+- q_e_psi 0.0 → 1.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 1.0 | 15.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.23] — 2026-05-11 UTC
+
+### Changed
+- Reverted to v0.2.16 (q_e_y 10.0→4.0, r_steer_rate 0.25→1.0)
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 0.0 | 15.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.22] — 2026-05-11 UTC
+
+### Changed
+- r_steer_rate 1.0 → 0.25
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 10.0 | 0.0 | 15.0 | 8.0 | 1.0 | 0.25 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.21] — 2026-05-11 UTC
+
+### Changed
+- q_vy 20.0 → 15.0 (reverted to v0.2.18)
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 10.0 | 0.0 | 15.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.20] — 2026-05-11 UTC
+
+### Changed
+- q_e_y 20.0 → 10.0, q_vy 15.0 → 20.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 10.0 | 0.0 | 20.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.19] — 2026-05-11 UTC
+
+### Changed
+- q_e_y 10.0 → 20.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 20.0 | 0.0 | 15.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.18] — 2026-05-11 UTC
+
+### Changed
+- q_e_y 2.0 → 10.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 10.0 | 0.0 | 15.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.17] — 2026-05-11 UTC
+
+### Changed
+- q_e_y 4.0 → 2.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 2.0 | 0.0 | 15.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.16] — 2026-05-11 UTC
+
+### Changed
+- q_vy 10.0 → 15.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 0.0 | 15.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.15] — 2026-05-11 UTC
+
+### Changed
+- q_vy 5.0 → 10.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 0.0 | 10.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.14] — 2026-05-11 UTC
+
+### Changed
+- Reverted to v0.2.9 base (q_e_y=4.0, q_r=8.0, r_steer_rate=1.0), q_e_psi 1.0 → 0.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 4.0 | 0.0 | 5.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- TBD
+
+---
+
+## [0.2.13] — 2026-05-11 UTC
+
+### Changed
+- q_r 8.0 → 10.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 2.0 | 1.0 | 5.0 | 10.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- C1: ~2.5m, SS: ~0m, C2: ~8.5m — worse than v0.2.9 on both metrics
+
+---
+
+## [0.2.12] — 2026-05-11 UTC
+
+### Changed
+- Reverted to v0.2.9 base (q_vy 7.0→5.0, r_steer_rate 0.5→1.0), q_e_y 4.0 → 2.0
+
+### Parameters
+| q_e_y | q_e_psi | q_vy | q_r | q_steer | r_steer | max_rate | lookahead |
+|-------|---------|------|-----|---------|---------|----------|-----------|
+| 2.0 | 1.0 | 5.0 | 8.0 | 1.0 | 1.0 | 1.3 | 0 |
+
+### Results
+- C1: ~3.0m, SS: noisy, C2: ~7.5m — q_e_y too low; post-C2 oscillations, worse than v0.2.9
+
+---
+
 ## [0.2.7] — 2026-05-11 UTC
 
 ### Changed
