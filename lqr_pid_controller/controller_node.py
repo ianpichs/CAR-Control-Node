@@ -99,6 +99,18 @@ LQR (lateral) — adjust Q/R via ROS parameters or launch file:
     Increase R        → smoother steering at the cost of tracking bandwidth.
     Relaunch node after each change; K is recomputed at startup.
 
+Lookahead feedforward — adjust via lookahead_steps in launch file:
+    Controls how many waypoints ahead the curvature feedforward reads.
+    Waypoint spacing = vx_op × dt_traj = 11.25 × 0.01 = 0.1125 m/waypoint.
+    lookahead_steps=0 → uses nearest waypoint only (no preview — current default).
+    Increase → earlier pre-steering before circle entries; reduces entry peak
+               at the cost of pre-steering while still on the straight if too
+               large (car begins curving before the geometric entry point).
+    Tested range: 20 (marginal SS improvement), 25 and 40 (oscillation on straight).
+    Skidpad straight-to-circle transition is abrupt (no curvature ramp), making
+    lookahead net negative on this track. Set to 0 until a smoother path transition
+    is available from the path planner.
+
 PID (longitudinal) — adjust via kp_list / ki_list in launch file or yaml:
     Values match DUT25 longitudinal_control node — only change if longitudinal
     performance differs from the MPC baseline.
@@ -152,6 +164,7 @@ VX_OP = 11.25  # [m/s]
 
 MAX_STEER_ANGLE = 0.4   # maximum front wheel steering angle   [rad]
 MAX_STEER_RATE = 0.5    # maximum steering rate                 [rad/s]
+LOOKAHEAD_STEPS = 0     # waypoints ahead for curvature feedforward preview (0 = nearest waypoint only)
 
 
 # =============================================================================
@@ -403,6 +416,7 @@ class LqrPidController(Node):
         self.declare_parameter("t_horizon",          T_HORIZON)
         self.declare_parameter("max_steer_angle",    MAX_STEER_ANGLE)
         self.declare_parameter("max_steer_rate",     MAX_STEER_RATE)
+        self.declare_parameter("lookahead_steps",    LOOKAHEAD_STEPS)
         # LQR cost entries declared individually for fine-grained tuning
         self.declare_parameter("q_e_y",        Q_MATRIX[0, 0])
         self.declare_parameter("q_e_psi",      Q_MATRIX[1, 1])
@@ -430,6 +444,7 @@ class LqrPidController(Node):
         self._dt_traj   = self._t_horizon / self._n_horizon
         self._max_steer = float(p("max_steer_angle"))
         self._max_steer_rate = float(p("max_steer_rate"))
+        self._lookahead_steps = int(p("lookahead_steps"))
 
         # Rebuild Q from individual ROS parameters
         self._Q = np.diag([
@@ -527,7 +542,12 @@ class LqrPidController(Node):
         # does not fight the non-zero steer and yaw rate required to follow
         # the circle. Without this, K[steer] and K[r] produce a large net
         # command opposing the turn at the moment circular motion begins.
-        kappa     = self._compute_path_curvature(ref_idx, msg)
+        #
+        # Curvature is read from a lookahead point rather than the nearest
+        # waypoint so the LQR begins pre-steering before the car reaches the
+        # geometric circle entry, reducing the circle-entry transient.
+        preview_idx = min(ref_idx + self._lookahead_steps, len(msg.pos_x) - 2)
+        kappa     = self._compute_path_curvature(preview_idx, msg)
         r_ref     = self._vx_op * kappa               # expected yaw rate  [rad/s]
         steer_ref = -(LF + LR) * kappa                # kinematic steer    [rad]
         # vy_ref matches skidpad_manager's vy proxy: 0.2429 * vx * r
@@ -581,7 +601,8 @@ class LqrPidController(Node):
         self.get_logger().info(
             f"LQR | "
             f"e_y={e_y:+.3f}m  e_psi={math.degrees(e_psi):+.1f}deg  "
-            f"kappa={kappa:+.4f}/m  r_ref={r_ref:+.3f}rad/s  steer_ref={steer_ref:+.3f}rad  "
+            f"preview={preview_idx-ref_idx}wp  kappa={kappa:+.4f}/m  "
+            f"r_ref={r_ref:+.3f}rad/s  steer_ref={steer_ref:+.3f}rad  "
             f"x0.r={x0.r:+.3f}rad/s  x0.steer={x0.steer:+.3f}rad  "
             f"u_raw={u_raw:+.4f}  u={u:+.4f}rad/s",
             throttle_duration_sec=0.25,

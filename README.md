@@ -51,10 +51,10 @@ Riccati Equation (DARE). K remains constant for the full mission.
 | Yaw inertia Iz | 294 kg·m² | parameters_LPV.yaml |
 | CoG–front axle lf | 0.872 m | wbase × (1 − x_cg) |
 | CoG–rear axle lr | 0.658 m | wbase × x_cg |
-| Front stiffness Cf | 20 000 N/rad | Linearization estimate — tune |
-| Rear stiffness Cr | 20 000 N/rad | Linearization estimate — tune |
+| Front stiffness Cf | 18 877 N/rad | Interpolated from DUT25 tyre load curve |
+| Rear stiffness Cr | 24 293 N/rad | Interpolated from DUT25 tyre load curve |
 | Max steer angle | 0.4 rad | parameters_LPV.yaml |
-| Max steer rate | 0.5 rad/s | parameters_LPV.yaml |
+| Max steer rate | 1.3 rad/s | Simulator maximum (DUT25 actual ~4.0 rad/s) |
 
 ---
 
@@ -63,18 +63,19 @@ Riccati Equation (DARE). K remains constant for the full mission.
 All Q/R weights are ROS parameters. Change them in the launch file or a YAML
 config; relaunch the node to apply (K is recomputed at startup).
 
-| Parameter | Confirmed best | Effect / Notes |
-|-----------|---------------|----------------|
-| `q_e_y` | **8.0** | Lateral tracking tightness. Raising from 4→8 cut SS offset from −0.47m to −0.35m. Primary lever for steady-state tracking. |
-| `q_e_psi` | **1.0** | Heading correction. **Floor is 1.0** — lowering to 0.5 caused oscillation divergence on circle 2. DARE responds <0.1% to small changes; do not raise above 2.0 (R3 regressed). |
-| `q_vy` | **5.0** | Lateral velocity damping. Raising from 2→5 improved circle entry stability. |
-| `q_r` | **4.0** | Yaw rate penalty — damps oscillation at circle entry. |
-| `q_steer` | **1.0** | **Dead knob in this regime.** DARE responds <0.5% to changes; raising to 4.0 regressed performance without meaningful K change. Do not adjust. |
-| `r_steer_rate` | **1.0** | Control effort penalty. Lowering from 1.5→1.0 improved transient response at circle entries. |
+| Parameter | Session best (v0.2.9) | Effect / Notes |
+|-----------|----------------------|----------------|
+| `q_e_y` | **4.0** | Lateral tracking tightness. Raising to 8.0 regressed C1 (3.1m→2.56m at R4, then hurt again in session). 4.0 is optimal. |
+| `q_e_psi` | **1.0** | Heading correction. **Floor is 1.0** — lowering to 0.5 causes oscillation divergence on circle 2. Do not adjust. |
+| `q_vy` | **5.0** | Lateral velocity damping. 7.0 gives C1=1.7m (best ever) but regresses C2 to 8.0m — net negative. 5.0 is the balanced value. |
+| `q_r` | **8.0** | Yaw rate penalty. Raising from 4→8 was the clearest session improvement: visible reduction in circle entry oscillation. |
+| `q_steer` | **1.0** | **Dead knob in this regime.** DARE responds <0.5% to changes. Do not adjust. |
+| `r_steer_rate` | **1.0** | Control effort penalty. Lowering from 1.5→1.0 was the single largest gain (SS offset eliminated). 0.5 gives C1=1.7m but C2 regression. |
 
-> **Current performance ceiling:** Q/R tuning is exhausted. Circle entry peaks (C1 ~2.56m, C2 ~7.66m)
-> and steady-state offset (~−0.35m) are driven by `max_steer_rate` saturation and feedforward
-> mismatch — not by Q/R weights. Next experiment: raise `max_steer_rate` to 1.0 rad/s.
+> **Session best result (v0.2.9):** C1=2.0m, SS≈0m, C2=7.5m at `max_steer_rate=1.3 rad/s`.
+> Raising `max_steer_rate` from 0.5→1.3 rad/s eliminated steady-state offset and reduced entry peaks.
+> Remaining C1/C2 transient peaks are the active tuning frontier; lookahead feedforward was tested
+> and reverted (abrupt straight-to-circle curvature transition makes it net negative on skidpad).
 
 ---
 

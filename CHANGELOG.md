@@ -7,6 +7,168 @@ Versioning: [Semantic Versioning](https://semver.org/) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.2.7] — 2026-05-11 UTC
+
+### Changed
+- **r_steer_rate 1.5 → 1.0**: lower control effort penalty allows the LQR to use
+  more of the available 1.3 rad/s steer rate budget. At 0.5 rad/s the rate limit was
+  always the binding constraint so r_steer_rate had little effect; at 1.3 rad/s the
+  LQR may be voluntarily under-steering due to the higher penalty. R4 historical data
+  (from log measurements) showed r_steer_rate=1.0 improved SS offset vs 1.5 — testing
+  whether C1/C2 entry peaks also improve now that precise plot comparison is available.
+
+### Results (from Foxglove plot)
+- C1 peak: +2.1m (improved from +2.5m baseline)
+- SS offset: ~0m (improved from −0.5m — effectively eliminated)
+- C2 peak: −7.5m (improved from −8.0m)
+- steer[0] actively using ±0.4 rad range throughout — LQR no longer conservative
+- New best run. SS offset elimination suggests it was a steering effort issue, not
+  a feedforward model mismatch as previously diagnosed.
+
+---
+
+## [0.2.11] — 2026-05-11 UTC
+
+### Changed
+- **q_vy 5.0 → 7.0**: more lateral velocity damping to test whether the elevated
+  damping level allows q_e_y to be raised above its current 4.0 ceiling without
+  inducing oscillation. q_vy has been fixed at 5.0 since R2 and not re-evaluated
+  at the new operating point (r_steer_rate=0.5, max_steer_rate=1.3).
+
+### Results (0.2.11 — q_vy=7.0, from plot)
+- C1: ~1.7m (improved from ~2.2m — best C1 recorded this session)
+- SS: ~0m (held)
+- C2: ~−8.0m (regressed from −7.5m)
+- Tradeoff: higher vy damping corrects the C1 lateral velocity buildup more
+  aggressively but conflicts with the C2 yaw rate reversal dynamics.
+  C1 −0.5m better, C2 −0.5m worse — net wash on total error.
+- Decision pending: whether to keep q_vy=7.0 and explore q_e_y above 4.0,
+  or revert to q_vy=5.0 (cleaner C2).
+
+### Session parameter evolution summary (2026-05-11)
+
+| Version | q_e_y | q_vy | q_r | r_steer | max_rate | C1 | SS | C2 |
+|---------|-------|------|-----|---------|----------|----|----|----|
+| R2 baseline (logs) | 4.0 | 5.0 | 4.0 | 1.5 | 0.5 | 2.3m | −0.47m | 7.3m |
+| 0.2.7 (r_steer 1.0) | 4.0 | 5.0 | 4.0 | 1.0 | 1.3 | 2.1m | ~0m | 7.5m |
+| 0.2.9 (q_r 8.0) | 4.0 | 5.0 | 8.0 | 1.0 | 1.3 | 2.0m | ~0m | 7.5m |
+| **0.2.9 ← session best** | **4.0** | **5.0** | **8.0** | **1.0** | **1.3** | **2.0m** | **~0m** | **7.5m** |
+| 0.2.10 (r_steer 0.5) | 4.0 | 5.0 | 8.0 | 0.5 | 1.3 | ~2.2m | ~0m | ~7.5m |
+| 0.2.11 (q_vy 7.0) | 4.0 | 7.0 | 8.0 | 0.5 | 1.3 | 1.7m | ~0m | 8.0m |
+
+---
+
+## [0.2.10] — 2026-05-11 UTC
+
+### Changed
+- **r_steer_rate 1.0 → 0.5**: continuing the trend that lower control effort penalty
+  unlocks more of the available 1.3 rad/s steer bandwidth. 1.5→1.0 produced the
+  largest single gain of the session (C1 2.5→2.1m, SS −0.5→0m, C2 8.0→7.5m).
+  Testing whether further reduction continues the trend or introduces oscillation
+  from over-aggressive steering.
+
+### Results (0.2.9 — q_r=8.0, from plot)
+- C1: ~2.0m (marginal improvement from 2.1m, within noise)
+- SS: ~0m (held)
+- C2: ~7.5m (unchanged)
+- Conclusion: q_r is DARE-insensitive in this regime; kept at 8.0 (no regression).
+
+### Results (0.2.10 — r_steer_rate=0.5, from plot)
+- C1: ~2.2m (within noise of 2.0m — marginal, trend flattening)
+- SS: ~0m (held)
+- C2: ~7.5m (unchanged)
+- Conclusion: r_steer_rate trend is exhausted. 1.5→1.0 was the impactful step;
+  1.0→0.5 yields diminishing returns. Effort penalty no longer a limiting factor.
+
+---
+
+## [0.2.9] — 2026-05-11 UTC
+
+### Changed
+- **q_e_y reverted 8.0 → 4.0**: q_e_y=8.0 produced C1 oscillation (~3m with ringing)
+  and C2 regression to −8.5m. q_vy=5.0 and q_r=4.0 cannot damp the more aggressive
+  lateral corrections at this steer rate — same relationship observed in original rounds.
+  q_e_y=4.0 is confirmed as the ceiling for current damping levels.
+- **q_r 4.0 → 8.0**: yaw rate build-up lag is the primary driver of C2 entry peak.
+  Higher q_r makes the LQR prioritise correcting yaw rate error more aggressively,
+  which should reduce the time the car takes to reach r_ref during the C1→C2 reversal.
+  At max_steer_rate=1.3 the LQR has sufficient bandwidth to act on this; at 0.5 rad/s
+  the rate limit would have prevented any benefit.
+
+### Results (0.2.8 — q_e_y=8.0, from plot)
+- C1: ~3m with oscillation (regression from 2.1m)
+- SS offset: ~0m (held from r_steer_rate change)
+- C2: ~−8.5m (regression from −7.5m)
+- Conclusion: q_e_y=8.0 is too aggressive for current damping; 4.0 is the ceiling.
+
+---
+
+## [0.2.8] — 2026-05-11 UTC
+
+### Changed
+- **q_e_y 4.0 → 8.0**
+
+---
+
+## [0.2.6] — 2026-05-11 UTC
+
+### Changed
+- **lookahead_steps set to 0 (disabled)**: all tested values (20, 25, 40) produced
+  net negative results on the skidpad. Root cause: the skidpad path has an abrupt
+  straight-to-circle curvature transition (0 → 1/7.5 m⁻¹ step) with no transition
+  curve. Lookahead feedforward works best with gradual curvature ramps; on the
+  skidpad it causes the car to pre-steer on the straight approach, creating a lateral
+  error that compounds with the circle-entry transient. Returning to nearest-waypoint
+  curvature feedforward (lookahead_steps=0) for clean R2 baseline measurement.
+
+### Next
+- Re-establish clean R2 baseline with the Foxglove error plot (not available during
+  original R1–R6 tuning rounds). Explore q_r / q_vy interaction at max_steer_rate=1.3
+  — those weights were tuned at 0.5 rad/s and the optimal damping may differ now.
+
+---
+
+## [0.2.5] — 2026-05-11 UTC
+
+### Changed
+- **lookahead_steps reduced 40 → 25** (2.8 m / 0.25 s preview): 40 steps caused
+  oscillatory behaviour on the straight approach to C1 — the car began pre-steering
+  4.5 m before the geometric entry, building a lateral error on the straight that the
+  LQR then had to fight simultaneously with the circle entry transient. 25 steps is a
+  conservative step back toward the 20-step baseline that showed clean single-spike C1
+  behaviour, with slightly more preview than 20 to retain the SS-offset improvement.
+
+---
+
+## [0.2.4] — 2026-05-11 UTC
+
+### Added
+- **Lookahead curvature feedforward** (`lookahead_steps` parameter): the curvature
+  feedforward (steer_ref, r_ref, vy_ref) now reads from a point `lookahead_steps`
+  waypoints ahead of the nearest waypoint rather than the nearest waypoint itself.
+  This gives the LQR preview of upcoming path curvature so it begins pre-steering
+  before the geometric circle entry, reducing the circle-entry lateral error transient.
+  Waypoint spacing = vx_op × dt_traj = 0.1125 m; default 40 steps = 4.5 m / 0.4 s
+  of preview at skidpad speed. The e_y and e_psi error states continue to use the
+  nearest waypoint — only the feedforward references use the lookahead index.
+- `lookahead_steps` exposed as a ROS parameter (default: 40) in both launch files.
+  Adjust without recompiling by changing the launch file value and rebuilding
+  mission_control only (no change to controller_node.py required).
+
+### Changed
+- Log line now prints `preview=Nwp` showing the effective lookahead distance in
+  waypoints, confirming the parameter is active at runtime.
+
+### Notes
+- Q/R weights remain at R2 best: q_e_y=4.0, q_e_psi=1.0, q_vy=5.0, q_r=4.0,
+  q_steer=1.0, r_steer_rate=1.5
+- max_steer_rate=1.3 rad/s (simulator physical limit)
+- Observed improvement at lookahead=40: SS offset reduced to ~0m during steady
+  circular tracking; C2 peak slight reduction (~6.5m vs ~7–7.5m at lookahead=0).
+  C1 peak (~2.5m) unchanged — dominated by yaw rate build-up lag, not steer delay.
+
+---
+
 ## [0.2.3] — 2026-05-11 UTC
 
 ### Changed (tuning)
