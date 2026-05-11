@@ -221,4 +221,6 @@ setup.py                 Python package entry point
 | Steering smoothness | May show more oscillation than MPC (no constraint handling) |
 | Constraint satisfaction | Soft — steer and rate are clamped post-computation |
 
-
+<p align="center">
+  <img src="0_3_7_output.png" alt="LQR 0.3.7 controller visualization" width="900">
+</p>
