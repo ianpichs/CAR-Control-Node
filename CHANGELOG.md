@@ -7,6 +7,26 @@ Versioning: [Semantic Versioning](https://semver.org/) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.4.1] — 2026-05-13 UTC  ← BENCHMARK MEASUREMENTS (paper data)
+
+### Measured (no code changes — data collection runs only)
+
+All runs on DUT25 FSG skidpad simulator, cruise 11.25 m/s, metric = `mpc_error_actual.error`.
+
+| Controller | C1 peak | SS | Changeover / C2 | Completes |
+|------------|---------|-----|-----------------|-----------|
+| LQR+PID lookahead=0 (no feedforward) | 0.35 m | −0.10 m | >9.5 m diverge | No |
+| LQR+PID v0.3.7 lookahead=40 | 0.76 m | −0.47 m | 0.52 m | Yes |
+| Decoupled MPC (mpc_python, DUT team) | 0.15 m | ~0 m | −0.85 m | Yes |
+| Coupled MPC v0.4.0 (ifp2107) | 0.15 m | −0.10 m | −2.8 m | No |
+
+Key findings:
+- Curvature feedforward (lookahead=40) is essential — without it LQR diverges >9.5 m at C2
+- Decoupled MPC achieves best SS tracking (~0 m) and completes both circles
+- Coupled MPC exits track at changeover: steer reversal 0.336 rad at 1.3 rad/s = 0.26 s = ~2.9 m travel
+
+---
+
 ## [0.4.0] — 2026-05-13 UTC  ← COUPLED MPC (NEW CONTROLLER)
 
 ### Added

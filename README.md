@@ -332,11 +332,18 @@ setup.py                           Python package entry point
 
 ## Controller Comparison
 
-| Metric | LQR+PID | Coupled MPC |
-|--------|---------|-------------|
-| C1 lateral error | 0.76 m | ±0.3 m |
-| Steady-state error | −0.47 m | — |
-| C2 lateral error | 0.52 m | ±0.3 m |
-| Changeover overshoot | 0.52 m | ~2.5 m |
-| Computation per step | <1 ms | ~3–8 ms (SQP_RTI) |
-| Constraint handling | Soft (clamped post-solve) | Hard + soft (NLP constraints) |
+Measured on DUT25 skidpad simulator (FSG layout, cruise speed 11.25 m/s).
+`mpc_error_actual.error` field read from Foxglove Studio.
+
+| Controller | C1 peak | SS | Changeover / C2 peak | Completes run |
+|------------|---------|-----|----------------------|---------------|
+| LQR+PID (lookahead=0, no feedforward) | 0.35 m | −0.10 m | diverges >9.5 m | No |
+| LQR+PID v0.3.7 (lookahead=40) | 0.76 m | −0.47 m | 0.52 m | Yes |
+| Decoupled MPC (mpc_python, DUT team) | 0.15 m | ~0 m | −0.85 m | Yes |
+| Coupled MPC v0.4.0 (ifp2107) | 0.15 m | −0.10 m | −2.8 m | No |
+
+**Key findings:**
+- Curvature feedforward (lookahead=40) is essential for LQR — without it the controller diverges at C2 entry (>9.5 m error)
+- Decoupled MPC achieves the best steady-state tracking (SS≈0) and completes both circles
+- Coupled MPC matches Decoupled MPC on C1/SS but exits track at changeover — actuation-limited steer reversal (0.336 rad at 1.3 rad/s max = 0.26 s, ~2.9 m travel) is an irreducible physical constraint
+- Computation: LQR <1 ms (matrix multiply); Coupled MPC ~3–8 ms (SQP_RTI NLP)
