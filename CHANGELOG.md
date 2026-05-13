@@ -7,7 +7,48 @@ Versioning: [Semantic Versioning](https://semver.org/) — MAJOR.MINOR.PATCH
 
 ---
 
-## [0.3.7] — 2026-05-11 UTC  ← BEST RESULT
+## [0.4.0] — 2026-05-13 UTC  ← COUPLED MPC (NEW CONTROLLER)
+
+### Added
+- **`coupled_mpc_controller/` package** — Coupled Nonlinear MPC for joint
+  lateral + longitudinal control of DUT25 on the skidpad mission.
+  Drop-in replacement for `mpc_python_exec` + `longitudinal_control`.
+  Author: Ian Pichs (ifp2107), Columbia ELEN 6760 Spring 2026.
+
+### Architecture
+- **State:** 7-element `[pos_x, pos_y, psi, vy, r, steer, vx]`
+- **Controls:** 2-element `[steer_rate, throttle]`
+- **Horizon:** N=40 stages, dt=25 ms, Tf=1.0 s (matches Decoupled MPC)
+- **Solver:** SQP_RTI + ERK4 (RK4) + PARTIAL_CONDENSING_HPIPM via acados
+- **Cost:** LINEAR_LS; weights W_diag = [10,10,1,0,0,1,10,1,0.5]
+  (indices: pos_x, pos_y, psi, vy, r, steer, vx, steer_rate, throttle)
+- **Constraints:** friction circle (ax/ax_max)²+(ay/ay_max)²≤1 (soft, slack)
+  + steer ±0.4 rad, steer_rate ±1.3 rad/s, throttle [-20,+15] m/s²
+
+### Key tuning decisions (2026-05-13 session)
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| W_pos_x, W_pos_y | 10.0 | Equal on both axes — cross-track direction rotates on circles |
+| W_vx | 10.0 | Raised from 2.0; prevents overspeed and panic braking at changeover |
+| W_psi | 1.0 | Higher values cause oscillation on circular paths |
+| vx_safe clamp | 1.0 m/s | Raised from 0.5 — zero-gradient Jacobian at 0.5 caused QP failures |
+| WARM_START_MISMATCH_THRESHOLD | 3.0 m | Mid-horizon (k=20) mismatch guard; resets stale warm-start at changeover |
+
+### Simulation results (best run, 2026-05-13)
+- Circle 1: ±0.3 m lateral error, clean tracking throughout
+- Changeover: ~2.5 m peak overshoot — physical constraint (steer reversal
+  from +0.168→−0.168 rad at 1.3 rad/s takes 0.258 s; warm-start reset fires
+  at crossing but cannot exceed physical actuation limit)
+- Circle 2: partially tracked; car recovers from changeover overshoot
+
+### Files
+- `coupled_mpc_controller/ocp_definition.py` — OCP definition + code generation
+- `coupled_mpc_controller/controller_node.py` — ROS 2 node
+- `launch/coupled_mpc_controller.launch.py` — standalone launch
+
+---
+
+## [0.3.7] — 2026-05-11 UTC  ← LQR BEST RESULT
 
 ### Changed
 - **Reverted to v0.2.9 Q/R, max_steer_rate 4.0 → 1.3, lookahead 60 → 40**: the Q
