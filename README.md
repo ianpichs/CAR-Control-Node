@@ -1,14 +1,18 @@
-# DUT25 LQR + PID Controller
+# DUT25 Autonomous — Controller Suite
 
-ROS 2 node implementing discrete-time LQR lateral control and gain-scheduled
-PID longitudinal control for the DUT25 Formula Student autonomous car.
+ROS 2 controller implementations for the DUT25 Formula Student autonomous car, skidpad mission.
+Three architectures compared: LQR+PID, Decoupled MPC (team baseline), and Coupled Nonlinear MPC.
 
-Designed as a drop-in replacement for `mpc_python_exec` + `longitudinal_control`
-in the DUT25 skidpad pipeline. The goal is a direct performance comparison between
-LQR (lower computational cost, fixed operating point) and the existing MPC
-(higher computational cost, adaptive LPV formulation).
+Both controllers authored by ifp2107 (Ian Pichs, Columbia ELEN 6760, Spring 2026) are designed
+as drop-in replacements for `mpc_python_exec` + `longitudinal_control` in the DUT25 skidpad
+pipeline. The ROS interface is identical to the existing MPC — `skidpad_manager_node` requires
+no modification.
 
 ---
+
+# LQR + PID Controller
+
+`lqr_pid_controller/` — Discrete-time LQR lateral control + gain-scheduled PID longitudinal.
 
 ## ROS Interface
 
@@ -18,11 +22,6 @@ LQR (lower computational cost, fixed operating point) and the existing MPC
 | Subscribe | `/controllers/accel_request` | `controller_msgs/AccRequest` | Speed setpoint + current speed |
 | Publish | `/controllers/opt_results` | `controller_msgs/OptResult` | Predicted steer sequence + trajectory |
 | Publish | `/controllers/long` | `controller_msgs/PIDErrors` | Throttle command + PID diagnostics |
-
-`skidpad_manager_node` requires no modification — it reads the same topics
-and message types that the MPC uses.
-
----
 
 ## System Model — Lateral (LQR)
 
@@ -119,7 +118,7 @@ config; relaunch the node to apply (K is recomputed at startup).
 | `r_steer_rate` | **1.0** | Control effort penalty. Lowering 1.5→1.0 was the largest single gain (SS offset eliminated). |
 | `lookahead_steps` | **40** | Waypoints ahead for curvature feedforward. 40 = 4.5 m preview — primary lever for C2 transient. |
 
-> **Best result (v0.3.7):** C1≈0.76m, SS≈−0.47m, C2≈0.52m at `max_steer_rate=1.3 rad/s`, `lookahead_steps=40`.
+> **LQR Best result (v0.3.7):** C1≈0.76m, SS≈−0.47m, C2≈0.52m at `max_steer_rate=1.3 rad/s`, `lookahead_steps=40`.
 > Lookahead feedforward at 40 steps reduced C2 from 7.5m to 0.52m (×14 improvement over baseline).
 > The straight-to-circle transition is abrupt (no clothoid), so lookahead >60 pre-steers on the
 > approach straight and worsens C1. 40 steps is the current optimum.
@@ -141,7 +140,7 @@ conventional controller stack. Three gain sets cover low / mid / high speed:
 
 ---
 
-## DUT25 Integration
+## DUT25 Integration (LQR+PID)
 
 ### Prerequisites — manual fixes required on a fresh machine
 
@@ -170,12 +169,7 @@ colcon build --packages-select lqr_pid_controller \
 source install/setup.bash
 ```
 
-### Add LQR mode to the launch system
-
-Edit `src/mission_control/launch/base_pipeline/controllers.launch.xml`
-and add a block for `mode == "lqr"` pointing at this package's launch file.
-
-Then launch with:
+### Launch
 
 ```bash
 ros2 launch simulator simulation.launch.xml \
@@ -185,13 +179,134 @@ ros2 launch simulator simulation.launch.xml \
 
 ### Monitoring in Foxglove Studio
 
-Connect to `ws://localhost:8765`. Key topics for LQR vs MPC comparison:
+Connect to `ws://localhost:8765`. Key topics:
 
 | Topic | Content |
 |-------|---------|
-| `/controllers/mpc_error_actual` | MPC lateral tracking error (baseline) |
-| `/controllers/opt_results` | LQR predicted trajectory + steer sequence |
+| `/controllers/mpc_error_actual` | Lateral tracking error |
+| `/controllers/opt_results` | Predicted trajectory + steer sequence |
 | `/controllers/long` | Longitudinal PID errors + throttle |
+| `/embedded/to/TrajectorySetpoints` | Combined steer + throttle to simulator |
+| `/viz/sim/real_car_pose` | Car position for 3D view |
+
+<p align="center">
+  <img src="0_3_7_output.png" alt="LQR v0.3.7 controller visualization" width="900">
+</p>
+
+---
+
+# Coupled Nonlinear MPC (MPCC)
+
+`coupled_mpc_controller/` — Coupled nonlinear MPC solving lateral and longitudinal control jointly in a single OCP. Uses acados SQP_RTI with ERK4 integration and PARTIAL_CONDENSING_HPIPM QP solver.
+
+## System Model — Coupled MPC
+
+**State:** `x = [pos_x, pos_y, psi, vy, r, steer, vx]` — 7 states (global position, heading, lateral velocity, yaw rate, steering angle, longitudinal speed)
+
+**Controls:** `u = [steer_rate, throttle]` — 2 inputs
+
+| Parameter | Value |
+|-----------|-------|
+| Horizon N | 40 steps |
+| dt | 0.025 s |
+| Horizon Tf | 1.0 s |
+| Solver | SQP_RTI + ERK4 + PARTIAL_CONDENSING_HPIPM |
+| Friction circle | (ax/15)² + (ay/15)² ≤ 1 (soft constraint) |
+
+**Cost weights** `W_diag = [pos_x, pos_y, psi, vy, r, steer, vx, steer_rate, throttle]`:
+
+| Weight | Value | Notes |
+|--------|-------|-------|
+| W_pos_x | 10 | Along-track position (vehicle body frame) |
+| W_pos_y | 10 | Cross-track position (primary lateral tracking metric) |
+| W_psi | 1 | Heading — kept low; heading changes continuously on a circle, high weight causes oscillation |
+| W_vy | 0 | Lateral velocity — not penalized (naturally regulated via pos_y) |
+| W_r | 0 | Yaw rate — not penalized directly |
+| W_steer | 1 | Steering angle |
+| W_vx | 10 | Longitudinal speed — high weight prevents speed runaway and panic braking at changeover |
+| W_steer_rate | 1 | Control effort on steering |
+| W_throttle | 0.5 | Control effort on throttle |
+
+**Vehicle parameters (DUT25):**
+
+| Parameter | Value |
+|-----------|-------|
+| Mass m | 180 kg |
+| Yaw inertia Iz | 294 kg·m² |
+| CoG–front axle lf | 0.872 m |
+| CoG–rear axle lr | 0.658 m |
+| Front stiffness Cf | 18 877 N/rad |
+| Rear stiffness Cr | 24 293 N/rad |
+| Drag coefficient | 0.0075 m/s² per (m/s)² |
+| Max steer angle | ±0.4 rad |
+| Max steer rate | 1.3 rad/s |
+| Max throttle | 15 m/s² |
+| Max braking | 20 m/s² |
+
+## Key Implementation Details
+
+**Vehicle body frame convention:** All waypoints in OptRequest are in the vehicle's locally-centred body frame — `x0.pos_x = 0`, `x0.pos_y = 0`, `x0.heading = 0` always. The OCP reference is set in this frame each timestep.
+
+**vx_safe clamp:** `vx_safe = ca.fmax(vx, 1.0)` — prevents Jacobian degeneracy in the bicycle model dynamics at near-zero speed. Clamp at 1.0 m/s rather than 0.5 m/s avoids a gradient singularity at the boundary.
+
+**Warm-start mismatch guard:** At circle changeover the previous optimal trajectory curves right for all 40 stages while the new reference curves left. Mid-horizon mismatch reaches ~3.4 m geometrically. When mismatch at k=20 exceeds `WARM_START_MISMATCH_THRESHOLD = 3.0 m`, the warm-start is reset to a neutral cruise trajectory (zero steer_rate, drag-compensating throttle). The 3.0 m threshold fires at changeover without triggering during normal tracking (errors ≤2 m).
+
+**Changeover physics (documented limitation):** At changeover steer must reverse from +0.168 to −0.168 rad (0.336 rad total). At MAX_STEER_RATE = 1.3 rad/s this takes 0.258 s → car travels ~2.9 m. The ~2.5 m changeover overshoot is an irreducible physical actuation constraint, not a tuning issue.
+
+## Performance (v0.4.0)
+
+| Phase | Lateral error |
+|-------|--------------|
+| Circle 1 (steady-state) | ±0.3 m |
+| Changeover overshoot | ~2.5 m peak |
+| Circle 2 | ±0.3 m (after recovery) |
+
+## ROS Interface
+
+Same topics as LQR+PID — no modifications to `skidpad_manager_node` required:
+
+| Direction | Topic | Message Type |
+|-----------|-------|-------------|
+| Subscribe | `/controllers/opt_requests` | `controller_msgs/OptRequest` |
+| Subscribe | `/controllers/accel_request` | `controller_msgs/AccRequest` |
+| Publish | `/controllers/opt_results` | `controller_msgs/OptResult` |
+| Publish | `/controllers/long` | `controller_msgs/PIDErrors` |
+
+## DUT25 Integration (Coupled MPC)
+
+### Build — after controller_node.py change only
+
+```bash
+cd /dut
+colcon build --packages-select coupled_mpc_controller
+source install/setup.bash
+```
+
+### Build — after ocp_definition.py change (regenerates C code)
+
+```bash
+cd /dut
+python3 src/controllers/coupled_mpc_controller/coupled_mpc_controller/ocp_definition.py
+colcon build --packages-select coupled_mpc_controller
+source install/setup.bash
+```
+
+### Launch
+
+```bash
+ros2 launch simulator simulation.launch.xml \
+    mission_name:=skidpad perception:=sim state_estimation:=sim \
+    rviz:=false controller_mode:=mpcc
+```
+
+### Monitoring in Foxglove Studio
+
+Connect to `ws://localhost:8765`. Key topics:
+
+| Topic | Content |
+|-------|---------|
+| `/controllers/opt_results` | Predicted trajectory + steer sequence |
+| `/controllers/long` | Throttle command + PID diagnostics |
 | `/embedded/to/TrajectorySetpoints` | Combined steer + throttle to simulator |
 | `/viz/sim/real_car_pose` | Car position for 3D view |
 
@@ -201,26 +316,27 @@ Connect to `ws://localhost:8765`. Key topics for LQR vs MPC comparison:
 
 ```
 lqr_pid_controller/
-  controller_node.py     Main node — LQR lateral + PID longitudinal
+  controller_node.py               LQR lateral + PID longitudinal node
+coupled_mpc_controller/
+  ocp_definition.py                Acados OCP definition + C code generation
+  controller_node.py               Coupled MPC ROS node
 launch/
-  lqr_pid_controller.launch.py   Launch file with all tuning parameters
-CHANGELOG.md             Full change history with dates and times
-package.xml              ROS 2 package manifest (version 0.2.0)
-setup.py                 Python package entry point
+  lqr_pid_controller.launch.py     Launch file — LQR+PID parameters
+  coupled_mpc_controller.launch.py Launch file — Coupled MPC parameters
+CHANGELOG.md                       Full change history with dates and times
+package.xml                        ROS 2 package manifest
+setup.py                           Python package entry point
 ```
 
 ---
 
-## Comparison Goals
+## Controller Comparison
 
-| Metric | Expected LQR result |
-|--------|-------------------|
-| Computation time per step | < 1 ms (matrix multiply only) |
-| Control frequency | 250 Hz — skidpad_manager publishes OptRequest on every ASControlsEstimations tick (request_interval = 0.004 s); MultiThreadedExecutor prevents accel callbacks from being starved |
-| Lateral tracking error | Comparable to MPC on skidpad (constant operating point) |
-| Steering smoothness | May show more oscillation than MPC (no constraint handling) |
-| Constraint satisfaction | Soft — steer and rate are clamped post-computation |
-
-<p align="center">
-  <img src="0_3_7_output.png" alt="LQR 0.3.7 controller visualization" width="900">
-</p>
+| Metric | LQR+PID | Coupled MPC |
+|--------|---------|-------------|
+| C1 lateral error | 0.76 m | ±0.3 m |
+| Steady-state error | −0.47 m | — |
+| C2 lateral error | 0.52 m | ±0.3 m |
+| Changeover overshoot | 0.52 m | ~2.5 m |
+| Computation per step | <1 ms | ~3–8 ms (SQP_RTI) |
+| Constraint handling | Soft (clamped post-solve) | Hard + soft (NLP constraints) |
