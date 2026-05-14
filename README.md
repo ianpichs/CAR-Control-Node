@@ -1,5 +1,7 @@
 # DUT25 Autonomous — Controller Suite
 
+> **Note (ELEN 6760 Submission):** Per discussion with Prof. Beigi I am not submitting the simulation that accompanies these control nodes, as it is proprietary to the Delft Student Formula Team. The two control nodes in this repository represent all original ifp2107 work.
+
 ROS 2 controller implementations for the DUT25 Formula Student autonomous car, skidpad mission.
 Three architectures compared: LQR+PID, Decoupled MPC (team baseline), and Coupled Nonlinear MPC.
 

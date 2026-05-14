@@ -1,3 +1,4 @@
+# ifp2107 — Ian Pichs, Columbia University, ELEN 6760 Spring 2026
 from setuptools import setup
 
 package_name = "lqr_pid_controller"
@@ -13,9 +14,9 @@ setup(
     ],
     install_requires=["setuptools", "numpy", "scipy"],
     zip_safe=True,
-    maintainer="pichs",
-    maintainer_email="pichs@todo.com",
-    description="ROS 2 node that computes steering via LQR and throttle via PID.",
+    maintainer="Ian Pichs (ifp2107)",
+    maintainer_email="ian.pichs@columbia.edu",
+    description="ifp2107 — LQR lateral + PID longitudinal controller for DUT25 skidpad. ELEN 6760 Spring 2026.",
     license="MIT",
     tests_require=["pytest"],
     entry_points={

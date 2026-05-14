@@ -1,5 +1,7 @@
+# ifp2107 — Ian Pichs, Columbia University, ELEN 6760 Spring 2026
 """
 controller_node.py — DUT25 LQR Lateral + PID Longitudinal Controller
+Author: Ian Pichs (ifp2107) — Columbia University
 =====================================================================
 
 PURPOSE
@@ -120,6 +122,8 @@ DEPENDENCIES (inside DUT25 Docker container)
     numpy, scipy, rclpy
 """
 
+# ifp2107 — all code in this file is original work by Ian Pichs (ifp2107)
+
 import math
 
 import numpy as np
@@ -131,6 +135,7 @@ from scipy.signal import cont2discrete
 from controller_msgs.msg import AccRequest, OptRequest, OptResult, PIDErrors
 
 
+# ifp2107: VEHICLE PARAMETERS — DUT25 measured values
 # =============================================================================
 # VEHICLE PARAMETERS — DUT25 measured values
 # Sources: parameters_LPV.yaml (m, Iz, wbase, x_cg, max_steering_angle,
@@ -162,6 +167,7 @@ VX_OP = 11.25  # [m/s]
 VX_SCHEDULE = [3.0, 5.0, 7.0, 9.0, 11.25]  # [m/s]
 
 
+# ifp2107: ACTUATOR LIMITS — DUT25 spec (from parameters_LPV.yaml)
 # =============================================================================
 # ACTUATOR LIMITS — DUT25 spec (from parameters_LPV.yaml)
 # =============================================================================
@@ -171,6 +177,7 @@ MAX_STEER_RATE = 1.3    # maximum steering rate                 [rad/s]
 LOOKAHEAD_STEPS = 40    # waypoints ahead for curvature feedforward preview (0 = nearest waypoint only)
 
 
+# ifp2107: TRAJECTORY PREDICTION PARAMETERS — must match skidpad_manager_node
 # =============================================================================
 # TRAJECTORY PREDICTION PARAMETERS
 # Must match skidpad_manager_node parameters (Nt=100, Tf=1.0) exactly.
@@ -183,6 +190,7 @@ T_HORIZON = 1.0     # prediction time window                   [s]
 DT_TRAJ = T_HORIZON / N_HORIZON  # step size = 0.01 s (10 ms)
 
 
+# ifp2107: LQR COST MATRICES — State: [e_y, e_psi, vy, r, steer]  Control: [steering_rate]
 # =============================================================================
 # LQR COST MATRICES
 # State: [e_y, e_psi, vy, r, steer]   Control: [steering_rate]
@@ -196,14 +204,15 @@ DT_TRAJ = T_HORIZON / N_HORIZON  # step size = 0.01 s (10 ms)
 Q_MATRIX = np.diag([
     4.0,    # e_y   — lateral path error     (tuned v0.3.7; ceiling at 4.0 for current damping)
     1.0,    # e_psi — heading error           (floor at 1.0; lower causes divergence)
-    5.0,    # vy    — lateral velocity        (tuned v0.3.7; 7.0 regresses C2 — net negative)
-    8.0,    # r     — yaw rate               (tuned v0.3.7; raising 4→8 was clearest session gain)
+    5.0,    # vy    — lateral velocity        (tuned v0.3.7; 7.0 gives C1 best but C2 regression)
+    8.0,    # r     — yaw rate               (tuned v0.3.7; raising 4→8 clearest session gain)
     1.0,    # steer — steering angle          (DARE-insensitive in this regime; leave at 1.0)
 ])
 
 R_MATRIX = np.array([[1.0]])   # steering_rate cost  (matches MPC R = 1)
 
 
+# ifp2107: LONGITUDINAL PID PARAMETERS — gain-scheduled, three speed ranges
 # =============================================================================
 # LONGITUDINAL PID — parameters matching DUT25 longitudinal_control node
 # Source: conventional/config/longitudinal_pid_parameters.yaml
@@ -243,6 +252,7 @@ _FF_COEFS    = np.linalg.lstsq(
 FF_A, FF_B, FF_C = _FF_COEFS
 
 
+# ifp2107: HELPER FUNCTIONS
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
@@ -343,6 +353,7 @@ def solve_dare(A_d: np.ndarray, B_d: np.ndarray,
     return K
 
 
+# ifp2107: ROS 2 NODE — LQR lateral + gain-scheduled PID longitudinal
 # =============================================================================
 # ROS 2 NODE
 # =============================================================================
@@ -816,6 +827,7 @@ class LqrPidController(Node):
         self._kd = self._kd_list[idx]
 
 
+# ifp2107: ENTRY POINT
 # =============================================================================
 # ENTRY POINT
 # =============================================================================
