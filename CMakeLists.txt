@@ -1,3 +1,4 @@
+# ifp2107 — Ian Pichs, Columbia University, ELEN 6760 Spring 2026
 cmake_minimum_required(VERSION 3.5)
 project(lqr_pid_controller)
 

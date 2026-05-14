@@ -1,6 +1,8 @@
+# ifp2107 — Ian Pichs, Columbia University, ELEN 6760 Spring 2026
 """
 lqr_pid_controller.launch.py
 -----------------------------
+Author: Ian Pichs (ifp2107) — Columbia University
 Launches the LQR lateral + PID longitudinal controller node for the DUT25
 skidpad mission.
 
